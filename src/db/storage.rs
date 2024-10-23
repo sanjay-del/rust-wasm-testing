@@ -6,12 +6,56 @@ use std::io::{self, Read, Write};
 #[derive(Deserialize, Serialize)]
 pub struct Storage {
     pub store: HashMap<String, String>,
+    pub current_transaction: Option<Transaction>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub enum Operation {
+    Set(String, String),
+    Delete(String),
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct Transaction {
+    operations: Vec<Operation>,
 }
 impl Storage {
     pub fn new() -> Self {
         Storage {
             store: HashMap::new(),
+            current_transaction: None,
         }
+    }
+
+    pub fn begin_transaction(&mut self) {
+        self.current_transaction = Some(Transaction {
+            operations: Vec::new(),
+        });
+    }
+
+    pub fn add_operation(&mut self, operation: Operation) {
+        if let Some(transaction) = &mut self.current_transaction {
+            transaction.operations.push(operation);
+        }
+    }
+    pub fn commit_transaction(&mut self) -> Result<(), String> {
+        if let Some(transaction) = self.current_transaction.take() {
+            for operation in transaction.operations {
+                match operation {
+                    Operation::Set(key, value) => self.set(key, value),
+                    Operation::Delete(key) => {
+                        let _ = self.delete(&key);
+                    }
+                }
+            }
+            Ok(())
+        } else {
+            Err("No active transactions".to_string())
+        }
+    }
+
+    pub fn rollback_transaction(&mut self) {
+        self.current_transaction = None;
     }
     pub fn set(&mut self, key: String, value: String) {
         self.store.insert(key, value);
@@ -35,7 +79,10 @@ impl Storage {
         let mut contents = String::new();
         file.read_to_string(&mut contents)?;
         let store: HashMap<String, String> = serde_json::from_str(&contents)?;
-        Ok(Storage { store })
+        Ok(Storage {
+            store,
+            current_transaction: None,
+        })
     }
 }
 
@@ -74,5 +121,27 @@ mod tests {
         assert_eq!(load_storage.get("key2"), Some(&"value2".to_string()));
 
         fs::remove_file("test_db.json").unwrap();
+    }
+
+    #[test]
+    fn test_transaction() {
+        let mut storage: Storage = Storage::new();
+        storage.begin_transaction();
+
+        storage.add_operation(Operation::Set("key1".to_string(), "value1".to_string()));
+        storage.add_operation(Operation::Set("key2".to_string(), "value2".to_string()));
+        let _ = storage.commit_transaction();
+
+        assert_eq!(storage.get("key1"), Some(&"value1".to_string()));
+        assert_eq!(storage.get("key2"), Some(&"value2".to_string()));
+
+        storage.begin_transaction();
+        storage.add_operation(Operation::Delete("key1".to_string()));
+        let _ = storage.commit_transaction();
+        assert_eq!(storage.get("key1"), None);
+        storage.begin_transaction();
+        storage.add_operation(Operation::Delete("key2".to_string()));
+        storage.rollback_transaction();
+        assert_eq!(storage.get("key2"), Some(&"value2".to_string()));
     }
 }
