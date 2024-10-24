@@ -2,10 +2,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read, Write};
+use std::time::{Duration, SystemTime};
 
 #[derive(Deserialize, Serialize)]
 pub struct Storage {
     pub store: HashMap<String, String>,
+    pub ttl_map: HashMap<String, SystemTime>,
     pub current_transaction: Option<Transaction>,
 }
 
@@ -23,6 +25,7 @@ impl Storage {
     pub fn new() -> Self {
         Storage {
             store: HashMap::new(),
+            ttl_map: HashMap::new(),
             current_transaction: None,
         }
     }
@@ -60,9 +63,40 @@ impl Storage {
     pub fn set(&mut self, key: String, value: String) {
         self.store.insert(key, value);
     }
+    pub fn set_with_ttl(&mut self, key: String, value: String, ttl: Option<Duration>) {
+        self.store.insert(key.clone(), value);
 
-    pub fn get(&self, key: &str) -> Option<&String> {
+        if let Some(ttl_duration) = ttl {
+            let expiration_time = SystemTime::now() + ttl_duration;
+            self.ttl_map.insert(key, expiration_time);
+        } else {
+            self.ttl_map.remove(&key);
+        }
+    }
+    pub fn get(&mut self, key: &str) -> Option<&String> {
+        if let Some(expiration) = self.ttl_map.get(key) {
+            if SystemTime::now() > *expiration {
+                self.store.remove(key);
+                self.ttl_map.remove(key);
+                return None;
+            }
+        }
         self.store.get(key)
+    }
+
+    pub fn clean_expired_keys(&mut self) {
+        let now = SystemTime::now();
+        let expired_keys: Vec<String> = self
+            .ttl_map
+            .iter()
+            .filter(|(_, &expiraion)| now > expiraion)
+            .map(|(key, _)| key.clone())
+            .collect();
+
+        for key in expired_keys {
+            self.store.remove(&key);
+            self.ttl_map.remove(&key);
+        }
     }
     pub fn delete(&mut self, key: &str) -> Option<String> {
         self.store.remove(key)
@@ -82,6 +116,7 @@ impl Storage {
         Ok(Storage {
             store,
             current_transaction: None,
+            ttl_map: HashMap::new(),
         })
     }
 }
@@ -101,6 +136,18 @@ mod tests {
     }
 
     #[test]
+    fn test_set_with_ttl() {
+        let mut storage = Storage::new();
+        storage.set_with_ttl(
+            "key1".to_string(),
+            "value1".to_string(),
+            Some(Duration::new(2, 0)),
+        );
+        std::thread::sleep(Duration::new(3, 0));
+        assert_eq!(storage.get("key1"), None);
+    }
+
+    #[test]
     fn test_delete() {
         let mut storage = Storage::new();
         storage.set("key1".to_string(), "value2".to_string());
@@ -116,7 +163,7 @@ mod tests {
 
         storage.save_to_file("test_db.json").unwrap();
 
-        let load_storage = Storage::load_from_file("test_db.json").unwrap();
+        let mut load_storage = Storage::load_from_file("test_db.json").unwrap();
         assert_eq!(load_storage.get("key1"), Some(&"value1".to_string()));
         assert_eq!(load_storage.get("key2"), Some(&"value2".to_string()));
 

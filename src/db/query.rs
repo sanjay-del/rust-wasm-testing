@@ -20,7 +20,7 @@ impl Query {
         self.index.add(key, value);
     }
 
-    pub fn get(&self, key: &str) -> Option<&String> {
+    pub fn get(&mut self, key: &str) -> Option<&String> {
         self.storage.get(key)
     }
 
