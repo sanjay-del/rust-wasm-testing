@@ -11,5 +11,5 @@ Use the below command to compile to js
 
 ## Run in the test-app 
 
-Use `npm install path-to-pkg` if error just copy the pkg to the directory and use it directly
+Use `npm install path-to-pkg` if error just copy the pkg to the directory and use it directly `cp -r ./pkg test-app/src/pkg`
 And directly use the package
